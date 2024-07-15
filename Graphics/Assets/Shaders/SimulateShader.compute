@@ -1,0 +1,52 @@
+#pragma kernel UpdateAgents
+#pragma kernel UpdateTexture
+
+struct Agent {
+    float2 position;
+    float angle;
+};
+
+RWStructuredBuffer<Agent> _Agents;
+int numAgents;
+float deltaTime;
+#define PX_PER_SEC 100.0f
+
+RWTexture2D<float4> _Texture;
+int pixelWidth;
+int pixelHeight;
+
+[numthreads(16, 1, 1)]
+void UpdateAgents(uint3 id : SV_DispatchThreadID)
+{
+    if(id.x >= numAgents) {
+        return;
+    }
+
+    Agent agent = _Agents[id.x];
+    _Texture[(int2)agent.position] = float4(0, 0, 0, 1);
+
+    // move
+    agent.position.x += cos(agent.angle) * PX_PER_SEC * deltaTime;
+    agent.position.y += sin(agent.angle) * PX_PER_SEC * deltaTime;
+
+    // bounce against the edge
+    //if()
+
+    _Agents[id.x] = agent;
+
+    int pixelX = (int)agent.position.x;
+    int pixelY = (int)agent.position.y;
+    int2 pixelPos = int2(pixelX, pixelY);
+    _Texture[pixelPos] = float4(1, 1, 1, 1);
+}
+
+[numthreads(8, 8, 1)]
+void UpdateTexture(uint3 id : SV_DispatchThreadID)
+{
+    // exit if outisde the bounds
+    if(id.x < 0 || id.y < 0 || id.x >= pixelWidth || id.y >= pixelHeight) {
+        return;
+    }
+
+    _Texture[id.xy] = float4((float)id.x / pixelWidth, (float)id.y / pixelHeight, 0, 1);
+}
