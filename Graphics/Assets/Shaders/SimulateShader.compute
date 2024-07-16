@@ -1,6 +1,7 @@
 #pragma kernel UpdateAgents
 #pragma kernel FadeTexture
 #pragma kernel BlurTexture
+#pragma kernel FollowAgentTrails
 
 struct Agent {
     float2 position;
@@ -17,6 +18,16 @@ int pixelWidth;
 int pixelHeight;
 RWTexture2D<float4> _Texture;
 RWTexture2D<float4> _PostProcessTexture;
+
+bool isInTexture(int2 pixel) {
+    return pixel.x >= 0 && pixel.y >= 0 && pixel.x < pixelWidth && pixel.y < pixelHeight;
+}
+
+// https://gist.github.com/keijiro/ee7bc388272548396870
+float getRandom(float2 uv)
+{
+    return frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);
+}
 
 [numthreads(16, 1, 1)]
 void UpdateAgents(uint3 id : SV_DispatchThreadID)
@@ -42,19 +53,71 @@ void UpdateAgents(uint3 id : SV_DispatchThreadID)
 
     _Agents[id.x] = agent;
 
+    // place pixel
     int pixelX = round(agent.position.x);
     int pixelY = round(agent.position.y);
     int2 pixelPos = int2(pixelX, pixelY);
     _Texture[pixelPos] = float4(agentColor, 1);
 }
 
-#define DECAY_RATE 0.09f
+#define SENSE_RADIUS 3
+float getTrailWeight(float2 position) {
+    float total;
+    int2 middle = int2(round(position.x), round(position.y));
+
+    for(int dx = -SENSE_RADIUS; dx <= SENSE_RADIUS; dx++) {
+        for(int dy = -SENSE_RADIUS; dy <= SENSE_RADIUS; dy++) {
+            int2 pixel = middle + int2(dx, dy);
+            if(isInTexture(pixel)) {
+                float4 color = _Texture[pixel];
+                total += color.x + color.y + color.z;
+            }
+        }
+    }
+
+    return total;
+}
+
+#define RADS_PER_SEC 5
+#define SENSE_RANGE 4
+#define SENSE_ROTATION 0.8
+[numthreads(16, 1, 1)]
+void FollowAgentTrails(uint3 id : SV_DispatchThreadID)
+{
+    if(id.x >= numAgents) {
+        return;
+    }
+
+    Agent agent = _Agents[id.x];
+
+    float angle = atan2(agent.direction.y, agent.direction.x);
+
+    float midWeight = getTrailWeight(agent.position + SENSE_RANGE * agent.direction);
+    float leftWeight = getTrailWeight(agent.position + SENSE_RANGE * float2(cos(angle + SENSE_ROTATION), sin(angle + SENSE_ROTATION)));
+    float rightWeight = getTrailWeight(agent.position + SENSE_RANGE * float2(cos(angle - SENSE_ROTATION), sin(angle - SENSE_ROTATION)));
+
+    float spinDir = 0;
+    if(rightWeight >= leftWeight && rightWeight >= midWeight) {
+        spinDir = -1;
+    }
+    if(leftWeight >= rightWeight && leftWeight >= midWeight) {
+        spinDir = 1;
+    }
+    // if middle is the greatest, stay straight
+
+    angle += spinDir * RADS_PER_SEC * deltaTime;
+    agent.direction = float2(cos(angle), sin(angle));
+
+    _Agents[id.x] = agent;
+}
+
+#define DECAY_RATE 0.2f
 
 [numthreads(8, 8, 1)]
 void FadeTexture(uint3 id : SV_DispatchThreadID)
 {
     // exit if outisde the bounds
-    if(id.x < 0 || id.y < 0 || id.x >= pixelWidth || id.y >= pixelHeight) {
+    if(!isInTexture(id.xy)) {
         return;
     }
 
@@ -65,14 +128,14 @@ void FadeTexture(uint3 id : SV_DispatchThreadID)
     _PostProcessTexture[id.xy] = color;
 }
 
-#define BLUR_RATE 30.0f
+#define BLUR_RATE 20.0f
 #define BLUR_RADIUS 1
 
 [numthreads(8, 8, 1)]
 void BlurTexture(uint3 id : SV_DispatchThreadID)
 {
     // exit if outisde the bounds
-    if (id.x < 0 || id.y < 0 || id.x >= pixelWidth || id.y >= pixelHeight) {
+    if(!isInTexture(id.xy)) {
         return;
     }
 
@@ -81,14 +144,11 @@ void BlurTexture(uint3 id : SV_DispatchThreadID)
 
     for(int dx = -BLUR_RADIUS; dx <= BLUR_RADIUS; dx++) {
         for(int dy = -BLUR_RADIUS; dy <= BLUR_RADIUS; dy++) {
-            int x = id.x + dx;
-            int y = id.y + dy;
-            if(x < 0 || y < 0 || x >= pixelWidth || y >= pixelHeight) {
-                continue;
+            int2 pixel = int2(id.x + dx, id.y + dy);
+            if(isInTexture(pixel)) {
+                totalColor += _Texture[pixel];
+                pixelCount++;
             }
-
-            totalColor += _Texture[int2(x, y)];
-            pixelCount++;
         }
     }
 
