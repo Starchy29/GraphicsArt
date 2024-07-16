@@ -9,27 +9,30 @@ public class GraphicsManager : MonoBehaviour
     private MeshRenderer meshRenderer;
     private MeshFilter filter;
     private RenderTexture texture;
-    private Vector2 worldDims;
+    private RenderTexture postProcessTexture;
 
+    const int RESOLUTION_HEIGHT = 1080;
     const float ASPECT_RATIO = 16f / 9f;
-    const int RESOLUTION_HEIGHT = 90;
     const int RESOLUTION_WIDTH = (int)(ASPECT_RATIO * RESOLUTION_HEIGHT);
 
     private struct Agent {
-        public const int BYTE_SIZE = 3 * sizeof(float);
+        public const int BYTE_SIZE = 4 * sizeof(float);
 
-        public float posX;
-        public float posY;
-        public float angle;
+        public Vector2 position;
+        public Vector2 direction;
     }
     private Agent[] agents;
 
     ComputeBuffer agentBuffer;
 
     const int AGENT_KERNEL = 0;
-    const int POST_PROCESS_KERNEL = 1;
+    const int FADE_KERNEL = 1;
+    const int BLUR_KERNEL = 2;
     private int agentGroupCount;
-    private Vector2Int drawGroupCounts;
+    private Vector2Int postProcessGroupCounts;
+
+    const float CYCLE_DURATION = 5.0f;
+    private float t;
 
     ~GraphicsManager() {
         agentBuffer.Release();
@@ -39,7 +42,7 @@ public class GraphicsManager : MonoBehaviour
         Camera camera = Camera.main;
         camera.transform.position = new Vector3(0, 0, -1f);
         transform.position = Vector3.zero;
-        worldDims = new Vector2(ASPECT_RATIO * camera.orthographicSize * 2f, camera.orthographicSize * 2f);
+        Vector2 worldDims = new Vector2(ASPECT_RATIO * camera.orthographicSize * 2f, camera.orthographicSize * 2f);
 
         // create rectangle mesh covering the screen
         Mesh mesh = new Mesh();
@@ -72,37 +75,13 @@ public class GraphicsManager : MonoBehaviour
         texture.enableRandomWrite = true;
         meshRenderer.sharedMaterial.mainTexture = texture;
 
-        // run shader
-        computeShader.SetInt("pixelWidth", texture.width);
-        computeShader.SetInt("pixelHeight", texture.height);
-        computeShader.SetTexture(POST_PROCESS_KERNEL, "_Texture", texture);
-        computeShader.SetTexture(AGENT_KERNEL, "_Texture", texture);
-
-        SetupAgents();
-        uint groupSize;
-        computeShader.GetKernelThreadGroupSizes(AGENT_KERNEL, out groupSize, out _, out _);
-        agentGroupCount = Mathf.CeilToInt((float)agents.Length / groupSize);
-        //computeShader.Dispatch(AGENT_KERNEL, Mathf.CeilToInt((float)agents.Length / groupSize), 1, 1);
-
-        uint groupX, groupY;
-        computeShader.GetKernelThreadGroupSizes(POST_PROCESS_KERNEL, out groupX, out groupY, out _);
-        drawGroupCounts = new Vector2Int(Mathf.CeilToInt((float)RESOLUTION_WIDTH / groupX), Mathf.CeilToInt((float)RESOLUTION_HEIGHT / groupY));
-
-        //computeShader.Dispatch(0, texture.width / 8, texture.height / 8, 1);
-    }
-
-    void FixedUpdate() {
-        computeShader.SetFloat("deltaTime", Time.fixedDeltaTime);
-        computeShader.Dispatch(AGENT_KERNEL, agentGroupCount, 1, 1);
-    }
-
-    private void SetupAgents() {
-        agents = new Agent[100];
+        // set up agents
+        agents = new Agent[50000];
         for(int i = 0; i < agents.Length; i++) {
+            float angle = Random.value * Mathf.PI * 2f;
             agents[i] = new Agent {
-                posX = Random.Range(0, RESOLUTION_WIDTH), 
-                posY = Random.Range(0, RESOLUTION_HEIGHT),
-                angle = Random.value * Mathf.PI * 2f
+                position = new Vector2(Random.Range(0, RESOLUTION_WIDTH), Random.Range(0, RESOLUTION_HEIGHT)),
+                direction = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle))
             };
         }
 
@@ -111,5 +90,49 @@ public class GraphicsManager : MonoBehaviour
         agentBuffer = new ComputeBuffer(agents.Length, Agent.BYTE_SIZE);
         agentBuffer.SetData(agents);
         computeShader.SetBuffer(AGENT_KERNEL, "_Agents", agentBuffer);
+
+        // set up shader
+        postProcessTexture = new RenderTexture(texture);
+        computeShader.SetInt("pixelWidth", texture.width);
+        computeShader.SetInt("pixelHeight", texture.height);
+        computeShader.SetTexture(AGENT_KERNEL, "_Texture", texture);
+        computeShader.SetTexture(FADE_KERNEL, "_Texture", texture);
+        computeShader.SetTexture(FADE_KERNEL, "_PostProcessTexture", postProcessTexture);
+        computeShader.SetTexture(BLUR_KERNEL, "_Texture", texture);
+        computeShader.SetTexture(BLUR_KERNEL, "_PostProcessTexture", postProcessTexture);
+
+        uint groupSize;
+        computeShader.GetKernelThreadGroupSizes(AGENT_KERNEL, out groupSize, out _, out _);
+        agentGroupCount = Mathf.CeilToInt((float)agents.Length / groupSize);
+
+        uint groupX, groupY;
+        computeShader.GetKernelThreadGroupSizes(FADE_KERNEL, out groupX, out groupY, out _);
+        postProcessGroupCounts = new Vector2Int(Mathf.CeilToInt((float)RESOLUTION_WIDTH / groupX), Mathf.CeilToInt((float)RESOLUTION_HEIGHT / groupY));
+    }
+
+    void FixedUpdate() {
+        t += Time.fixedDeltaTime / CYCLE_DURATION;
+        t %= 1f;
+
+        Color currentColor = new Color(
+            Mathf.Clamp01(2f - Mathf.Abs(6f * (t > 0.5f ? t - 1.0f : t))),
+            Mathf.Clamp01(2f - Mathf.Abs(6f * (t - 1f / 3f))),
+            Mathf.Clamp01(2f - Mathf.Abs(6f * (t - 2f / 3f)))
+        );
+        //Color currentColor = Color.blue;
+
+        computeShader.SetFloats("agentColor", currentColor.r, currentColor.g, currentColor.b);
+        computeShader.SetFloat("deltaTime", Time.fixedDeltaTime);
+
+        computeShader.Dispatch(AGENT_KERNEL, agentGroupCount, 1, 1);
+        computeShader.Dispatch(BLUR_KERNEL, postProcessGroupCounts.x, postProcessGroupCounts.y, 1);
+        PushPostProcessToOutput();
+        computeShader.Dispatch(FADE_KERNEL, postProcessGroupCounts.x, postProcessGroupCounts.y, 1);
+        PushPostProcessToOutput();
+        
+    }
+
+    private void PushPostProcessToOutput() {
+        Graphics.CopyTexture(postProcessTexture, texture);
     }
 }

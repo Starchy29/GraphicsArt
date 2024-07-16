@@ -1,19 +1,22 @@
 #pragma kernel UpdateAgents
-#pragma kernel UpdateTexture
+#pragma kernel FadeTexture
+#pragma kernel BlurTexture
 
 struct Agent {
     float2 position;
-    float angle;
+    float2 direction;
 };
 
 RWStructuredBuffer<Agent> _Agents;
 int numAgents;
 float deltaTime;
-#define PX_PER_SEC 100.0f
+#define PX_PER_SEC 50.0f
+float3 agentColor;
 
-RWTexture2D<float4> _Texture;
 int pixelWidth;
 int pixelHeight;
+RWTexture2D<float4> _Texture;
+RWTexture2D<float4> _PostProcessTexture;
 
 [numthreads(16, 1, 1)]
 void UpdateAgents(uint3 id : SV_DispatchThreadID)
@@ -23,30 +26,74 @@ void UpdateAgents(uint3 id : SV_DispatchThreadID)
     }
 
     Agent agent = _Agents[id.x];
-    _Texture[(int2)agent.position] = float4(0, 0, 0, 1);
 
     // move
-    agent.position.x += cos(agent.angle) * PX_PER_SEC * deltaTime;
-    agent.position.y += sin(agent.angle) * PX_PER_SEC * deltaTime;
+    agent.position += agent.direction * PX_PER_SEC * deltaTime;
 
     // bounce against the edge
-    //if()
+    if(agent.position.x < 0 || agent.position.x >= pixelWidth) {
+        agent.position.x = clamp(agent.position.x, 0, pixelWidth - 1);
+        agent.direction.x *= -1;
+    }
+    if(agent.position.y < 0 || agent.position.y >= pixelHeight) {
+        agent.position.y = clamp(agent.position.y, 0, pixelHeight - 1);
+        agent.direction.y *= -1;
+    }
 
     _Agents[id.x] = agent;
 
-    int pixelX = (int)agent.position.x;
-    int pixelY = (int)agent.position.y;
+    int pixelX = round(agent.position.x);
+    int pixelY = round(agent.position.y);
     int2 pixelPos = int2(pixelX, pixelY);
-    _Texture[pixelPos] = float4(1, 1, 1, 1);
+    _Texture[pixelPos] = float4(agentColor, 1);
 }
 
+#define DECAY_RATE 0.09f
+
 [numthreads(8, 8, 1)]
-void UpdateTexture(uint3 id : SV_DispatchThreadID)
+void FadeTexture(uint3 id : SV_DispatchThreadID)
 {
     // exit if outisde the bounds
     if(id.x < 0 || id.y < 0 || id.x >= pixelWidth || id.y >= pixelHeight) {
         return;
     }
 
-    _Texture[id.xy] = float4((float)id.x / pixelWidth, (float)id.y / pixelHeight, 0, 1);
+    float4 color = _Texture[id.xy];
+    float decay = DECAY_RATE * deltaTime;
+    color -= float4(decay, decay, decay, 0);
+    color = float4(max(0, color.x), max(0, color.y), max(0, color.z), 1);
+    _PostProcessTexture[id.xy] = color;
+}
+
+#define BLUR_RATE 30.0f
+#define BLUR_RADIUS 1
+
+[numthreads(8, 8, 1)]
+void BlurTexture(uint3 id : SV_DispatchThreadID)
+{
+    // exit if outisde the bounds
+    if (id.x < 0 || id.y < 0 || id.x >= pixelWidth || id.y >= pixelHeight) {
+        return;
+    }
+
+    float4 totalColor = 0;
+    int pixelCount = 0;
+
+    for(int dx = -BLUR_RADIUS; dx <= BLUR_RADIUS; dx++) {
+        for(int dy = -BLUR_RADIUS; dy <= BLUR_RADIUS; dy++) {
+            int x = id.x + dx;
+            int y = id.y + dy;
+            if(x < 0 || y < 0 || x >= pixelWidth || y >= pixelHeight) {
+                continue;
+            }
+
+            totalColor += _Texture[int2(x, y)];
+            pixelCount++;
+        }
+    }
+
+    float4 blurColor = totalColor / pixelCount;
+    float4 blendedColor = lerp(_Texture[id.xy], blurColor, BLUR_RATE * deltaTime);
+
+    _PostProcessTexture[id.xy] = blendedColor;
 }
