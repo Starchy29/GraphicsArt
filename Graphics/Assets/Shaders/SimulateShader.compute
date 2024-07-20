@@ -1,6 +1,5 @@
 #pragma kernel UpdateAgents
-#pragma kernel FadeTexture
-#pragma kernel BlurTexture
+#pragma kernel DiffuseTrail
 #pragma kernel FollowAgentTrails
 
 struct Agent {
@@ -8,10 +7,21 @@ struct Agent {
     float2 direction;
 };
 
+struct SimSettings {
+    float moveSpeed;
+    float turnSpeed;
+    float fadeRate;
+    float blurRate;
+    float senseRange;
+    float senseRotation;
+};
+
+RWStructuredBuffer<SimSettings> settings;
+
 RWStructuredBuffer<Agent> _Agents;
 int numAgents;
+float totalTime;
 float deltaTime;
-#define PX_PER_SEC 50.0f
 float3 agentColor;
 
 int pixelWidth;
@@ -21,6 +31,10 @@ RWTexture2D<float4> _PostProcessTexture;
 
 bool isInTexture(int2 pixel) {
     return pixel.x >= 0 && pixel.y >= 0 && pixel.x < pixelWidth && pixel.y < pixelHeight;
+}
+
+float2 getUnitVec(float angle) {
+    return float2(cos(angle), sin(angle));
 }
 
 // https://gist.github.com/keijiro/ee7bc388272548396870
@@ -39,16 +53,30 @@ void UpdateAgents(uint3 id : SV_DispatchThreadID)
     Agent agent = _Agents[id.x];
 
     // move
-    agent.position += agent.direction * PX_PER_SEC * deltaTime;
+    agent.position += agent.direction * settings[0].moveSpeed * deltaTime;
 
     // bounce against the edge
-    if(agent.position.x < 0 || agent.position.x >= pixelWidth) {
-        agent.position.x = clamp(agent.position.x, 0, pixelWidth - 1);
-        agent.direction.x *= -1;
+    //if(agent.position.x < 0 || agent.position.x >= pixelWidth) {
+    //    agent.position.x = clamp(agent.position.x, 0, pixelWidth - 1);
+    //    agent.direction.x *= -1;
+    //}
+    //if(agent.position.y < 0 || agent.position.y >= pixelHeight) {
+    //    agent.position.y = clamp(agent.position.y, 0, pixelHeight - 1);
+    //    agent.direction.y *= -1;
+    //}
+
+    // loop around the edge
+    if(agent.position.x < 0) {
+        agent.position.x += pixelWidth;
     }
-    if(agent.position.y < 0 || agent.position.y >= pixelHeight) {
-        agent.position.y = clamp(agent.position.y, 0, pixelHeight - 1);
-        agent.direction.y *= -1;
+    else if(agent.position.x >= pixelWidth) {
+        agent.position.x -= pixelWidth;
+    }
+    if(agent.position.y < 0) {
+        agent.position.y += pixelHeight;
+    }
+    else if(agent.position.y >= pixelHeight) {
+        agent.position.y -= pixelHeight;
     }
 
     _Agents[id.x] = agent;
@@ -60,7 +88,7 @@ void UpdateAgents(uint3 id : SV_DispatchThreadID)
     _Texture[pixelPos] = float4(agentColor, 1);
 }
 
-#define SENSE_RADIUS 3
+#define SENSE_RADIUS 1
 float getTrailWeight(float2 position) {
     float total;
     int2 middle = int2(round(position.x), round(position.y));
@@ -78,9 +106,6 @@ float getTrailWeight(float2 position) {
     return total;
 }
 
-#define RADS_PER_SEC 5
-#define SENSE_RANGE 4
-#define SENSE_ROTATION 0.8
 [numthreads(16, 1, 1)]
 void FollowAgentTrails(uint3 id : SV_DispatchThreadID)
 {
@@ -92,47 +117,32 @@ void FollowAgentTrails(uint3 id : SV_DispatchThreadID)
 
     float angle = atan2(agent.direction.y, agent.direction.x);
 
-    float midWeight = getTrailWeight(agent.position + SENSE_RANGE * agent.direction);
-    float leftWeight = getTrailWeight(agent.position + SENSE_RANGE * float2(cos(angle + SENSE_ROTATION), sin(angle + SENSE_ROTATION)));
-    float rightWeight = getTrailWeight(agent.position + SENSE_RANGE * float2(cos(angle - SENSE_ROTATION), sin(angle - SENSE_ROTATION)));
+    float midWeight = getTrailWeight(agent.position + settings[0].senseRange * agent.direction);
+    float leftWeight = getTrailWeight(agent.position + settings[0].senseRange * getUnitVec(angle + settings[0].senseRotation));
+    float rightWeight = getTrailWeight(agent.position + settings[0].senseRange * getUnitVec(angle - settings[0].senseRotation));
 
-    float spinDir = 0;
-    if(rightWeight >= leftWeight && rightWeight >= midWeight) {
-        spinDir = -1;
+    float randScale = 2 * getRandom(agent.position / float2(pixelWidth, pixelHeight) * totalTime);
+    if(midWeight > rightWeight && midWeight > leftWeight) {
+        // continue straight
     }
-    if(leftWeight >= rightWeight && leftWeight >= midWeight) {
-        spinDir = 1;
+    else if(rightWeight > midWeight && leftWeight > midWeight) {
+        angle += (randScale - 1.0f) * settings[0].turnSpeed * deltaTime; // random spin when influenced to the right and left
     }
-    // if middle is the greatest, stay straight
-
-    angle += spinDir * RADS_PER_SEC * deltaTime;
-    agent.direction = float2(cos(angle), sin(angle));
+    else if(rightWeight > leftWeight) {
+        angle += -1 * randScale * settings[0].turnSpeed * deltaTime;
+    }
+    else if(leftWeight > rightWeight) {
+        angle += randScale * settings[0].turnSpeed * deltaTime;
+    }
+    
+    agent.direction = getUnitVec(angle);
 
     _Agents[id.x] = agent;
 }
 
-#define DECAY_RATE 0.2f
-
-[numthreads(8, 8, 1)]
-void FadeTexture(uint3 id : SV_DispatchThreadID)
-{
-    // exit if outisde the bounds
-    if(!isInTexture(id.xy)) {
-        return;
-    }
-
-    float4 color = _Texture[id.xy];
-    float decay = DECAY_RATE * deltaTime;
-    color -= float4(decay, decay, decay, 0);
-    color = float4(max(0, color.x), max(0, color.y), max(0, color.z), 1);
-    _PostProcessTexture[id.xy] = color;
-}
-
-#define BLUR_RATE 20.0f
 #define BLUR_RADIUS 1
-
 [numthreads(8, 8, 1)]
-void BlurTexture(uint3 id : SV_DispatchThreadID)
+void DiffuseTrail(uint3 id : SV_DispatchThreadID)
 {
     // exit if outisde the bounds
     if(!isInTexture(id.xy)) {
@@ -153,7 +163,9 @@ void BlurTexture(uint3 id : SV_DispatchThreadID)
     }
 
     float4 blurColor = totalColor / pixelCount;
-    float4 blendedColor = lerp(_Texture[id.xy], blurColor, BLUR_RATE * deltaTime);
+    float blurWeight = settings[0].blurRate * deltaTime;
+    float4 blendedColor = (1 - blurWeight) * _Texture[id.xy] + blurWeight * blurColor;
+    blendedColor = max(0, blendedColor - settings[0].fadeRate * deltaTime);
 
     _PostProcessTexture[id.xy] = blendedColor;
 }

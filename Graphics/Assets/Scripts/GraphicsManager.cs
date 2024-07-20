@@ -15,6 +15,25 @@ public class GraphicsManager : MonoBehaviour
     const float ASPECT_RATIO = 16f / 9f;
     const int RESOLUTION_WIDTH = (int)(ASPECT_RATIO * RESOLUTION_HEIGHT);
 
+    private struct SimSettings {
+        public static int BYTE_SIZE = 6 * sizeof(float);
+
+        public float moveSpeed; // pixels per second
+        public float turnSpeed; // radians per second
+        public float fadeRate;
+        public float blurRate;
+        public float senseRange;
+        public float senseRotation; // radians
+    }
+    private SimSettings settings = new SimSettings {
+        moveSpeed = 250f,
+        turnSpeed = 6f,
+        fadeRate = 0.2f,
+        blurRate = 10f,
+        senseRange = 120f,
+        senseRotation = 0.4f,
+    };
+
     private struct Agent {
         public const int BYTE_SIZE = 4 * sizeof(float);
 
@@ -24,11 +43,11 @@ public class GraphicsManager : MonoBehaviour
     private Agent[] agents;
 
     ComputeBuffer agentBuffer;
+    ComputeBuffer settingsBuffer;
 
     const int AGENT_KERNEL = 0;
-    const int FADE_KERNEL = 1;
-    const int BLUR_KERNEL = 2;
-    const int FOLLOW_TRAIL_KERNEL = 3;
+    const int DIFFUSE_KERNEL = 1;
+    const int FOLLOW_TRAIL_KERNEL = 2;
     private int agentGroupCount;
     private Vector2Int postProcessGroupCounts;
 
@@ -37,6 +56,7 @@ public class GraphicsManager : MonoBehaviour
 
     ~GraphicsManager() {
         agentBuffer.Release();
+        settingsBuffer.Release();
     }
 
     void Start() {
@@ -84,13 +104,19 @@ public class GraphicsManager : MonoBehaviour
             agents[i] = new Agent {
                 //position = new Vector2(Random.Range(0, RESOLUTION_WIDTH), Random.Range(0, RESOLUTION_HEIGHT)),
                 position = Random.insideUnitCircle * RESOLUTION_HEIGHT / 2f + middle,
-                //direction = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle))
+                //position = middle,
+                direction = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle))
             };
 
             agents[i].direction = (middle - agents[i].position).normalized; // move towards the center
         }
 
         // set up shader
+        settingsBuffer = new ComputeBuffer(1, SimSettings.BYTE_SIZE);
+        settingsBuffer.SetData(new SimSettings[1] { settings });
+        computeShader.SetBuffer(AGENT_KERNEL, "settings", settingsBuffer);
+        computeShader.SetBuffer(DIFFUSE_KERNEL, "settings", settingsBuffer);
+        computeShader.SetBuffer(FOLLOW_TRAIL_KERNEL, "settings", settingsBuffer);
         computeShader.SetInt("numAgents", agents.Length);
 
         agentBuffer = new ComputeBuffer(agents.Length, Agent.BYTE_SIZE);
@@ -103,22 +129,20 @@ public class GraphicsManager : MonoBehaviour
         computeShader.SetInt("pixelHeight", texture.height);
         computeShader.SetTexture(AGENT_KERNEL, "_Texture", texture);
         computeShader.SetTexture(FOLLOW_TRAIL_KERNEL, "_Texture", texture);
-        computeShader.SetTexture(FADE_KERNEL, "_Texture", texture);
-        computeShader.SetTexture(FADE_KERNEL, "_PostProcessTexture", postProcessTexture);
-        computeShader.SetTexture(BLUR_KERNEL, "_Texture", texture);
-        computeShader.SetTexture(BLUR_KERNEL, "_PostProcessTexture", postProcessTexture);
+        computeShader.SetTexture(DIFFUSE_KERNEL, "_Texture", texture);
+        computeShader.SetTexture(DIFFUSE_KERNEL, "_PostProcessTexture", postProcessTexture);
 
         uint groupSize;
         computeShader.GetKernelThreadGroupSizes(AGENT_KERNEL, out groupSize, out _, out _);
         agentGroupCount = Mathf.CeilToInt((float)agents.Length / groupSize);
 
         uint groupX, groupY;
-        computeShader.GetKernelThreadGroupSizes(FADE_KERNEL, out groupX, out groupY, out _);
+        computeShader.GetKernelThreadGroupSizes(DIFFUSE_KERNEL, out groupX, out groupY, out _);
         postProcessGroupCounts = new Vector2Int(Mathf.CeilToInt((float)RESOLUTION_WIDTH / groupX), Mathf.CeilToInt((float)RESOLUTION_HEIGHT / groupY));
     }
 
-    void FixedUpdate() {
-        t += Time.fixedDeltaTime / CYCLE_DURATION;
+    void Update() {
+        t += Time.deltaTime / CYCLE_DURATION;
         t %= 1f;
 
         //Color currentColor = new Color(
@@ -129,12 +153,17 @@ public class GraphicsManager : MonoBehaviour
         Color currentColor = Color.white;
 
         computeShader.SetFloats("agentColor", currentColor.r, currentColor.g, currentColor.b);
-        computeShader.SetFloat("deltaTime", Time.fixedDeltaTime);
+        computeShader.SetFloat("deltaTime", Time.deltaTime);
+        computeShader.SetFloat("totalTime", Time.realtimeSinceStartup);
 
         computeShader.Dispatch(FOLLOW_TRAIL_KERNEL, agentGroupCount, 1, 1);
         computeShader.Dispatch(AGENT_KERNEL, agentGroupCount, 1, 1);
-        RunPostProcess(BLUR_KERNEL);
-        RunPostProcess(FADE_KERNEL);
+        
+    }
+
+    private void FixedUpdate() {
+        computeShader.SetFloat("deltaTime", Time.fixedDeltaTime);
+        RunPostProcess(DIFFUSE_KERNEL);
         
     }
 
