@@ -11,28 +11,9 @@ public class GraphicsManager : MonoBehaviour
     private RenderTexture texture;
     private RenderTexture postProcessTexture;
 
-    const int RESOLUTION_HEIGHT = 1440;
+    const int RESOLUTION_HEIGHT = 1440; // 1440
     const float ASPECT_RATIO = 16f / 9f;
     const int RESOLUTION_WIDTH = (int)(ASPECT_RATIO * RESOLUTION_HEIGHT);
-
-    private struct SimSettings {
-        public static int BYTE_SIZE = 6 * sizeof(float);
-
-        public float moveSpeed; // pixels per second
-        public float turnSpeed; // radians per second
-        public float fadeRate;
-        public float blurRate;
-        public float senseRange;
-        public float senseRotation; // radians
-    }
-    private SimSettings settings = new SimSettings {
-        moveSpeed = 250f,
-        turnSpeed = 6f,
-        fadeRate = 0.2f,
-        blurRate = 10f,
-        senseRange = 120f,
-        senseRotation = 0.4f,
-    };
 
     private struct Agent {
         public const int BYTE_SIZE = 4 * sizeof(float);
@@ -98,14 +79,14 @@ public class GraphicsManager : MonoBehaviour
 
         // set up agents
         Vector2 middle = new Vector2(RESOLUTION_WIDTH, RESOLUTION_HEIGHT) / 2f;
-        agents = new Agent[1000000];
+        agents = new Agent[SettingsContainer.Settings.agentCount];
         for(int i = 0; i < agents.Length; i++) {
             float angle = Random.value * Mathf.PI * 2f;
             agents[i] = new Agent {
                 //position = new Vector2(Random.Range(0, RESOLUTION_WIDTH), Random.Range(0, RESOLUTION_HEIGHT)),
                 position = Random.insideUnitCircle * RESOLUTION_HEIGHT / 2f + middle,
                 //position = middle,
-                direction = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle))
+                //direction = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle))
             };
 
             agents[i].direction = (middle - agents[i].position).normalized; // move towards the center
@@ -113,11 +94,10 @@ public class GraphicsManager : MonoBehaviour
 
         // set up shader
         settingsBuffer = new ComputeBuffer(1, SimSettings.BYTE_SIZE);
-        settingsBuffer.SetData(new SimSettings[1] { settings });
+        settingsBuffer.SetData(new SimSettings[1] { SettingsContainer.Settings });
         computeShader.SetBuffer(AGENT_KERNEL, "settings", settingsBuffer);
         computeShader.SetBuffer(DIFFUSE_KERNEL, "settings", settingsBuffer);
         computeShader.SetBuffer(FOLLOW_TRAIL_KERNEL, "settings", settingsBuffer);
-        computeShader.SetInt("numAgents", agents.Length);
 
         agentBuffer = new ComputeBuffer(agents.Length, Agent.BYTE_SIZE);
         agentBuffer.SetData(agents);

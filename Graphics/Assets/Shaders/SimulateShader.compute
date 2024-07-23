@@ -8,6 +8,7 @@ struct Agent {
 };
 
 struct SimSettings {
+    int agentCount;
     float moveSpeed;
     float turnSpeed;
     float fadeRate;
@@ -19,7 +20,6 @@ struct SimSettings {
 RWStructuredBuffer<SimSettings> settings;
 
 RWStructuredBuffer<Agent> _Agents;
-int numAgents;
 float totalTime;
 float deltaTime;
 float3 agentColor;
@@ -43,10 +43,10 @@ float getRandom(float2 uv)
     return frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);
 }
 
-[numthreads(16, 1, 1)]
+[numthreads(32, 1, 1)]
 void UpdateAgents(uint3 id : SV_DispatchThreadID)
 {
-    if(id.x >= numAgents) {
+    if(id.x >= settings[0].agentCount) {
         return;
     }
 
@@ -106,10 +106,10 @@ float getTrailWeight(float2 position) {
     return total;
 }
 
-[numthreads(16, 1, 1)]
+[numthreads(32, 1, 1)]
 void FollowAgentTrails(uint3 id : SV_DispatchThreadID)
 {
-    if(id.x >= numAgents) {
+    if(id.x >= settings[0].agentCount) {
         return;
     }
 
