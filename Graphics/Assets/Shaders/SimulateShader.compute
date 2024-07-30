@@ -37,10 +37,16 @@ float2 getUnitVec(float angle) {
     return float2(cos(angle), sin(angle));
 }
 
-// https://gist.github.com/keijiro/ee7bc388272548396870
-float getRandom(float2 uv)
+// www.cs.ubc.ca/~rbridson/docs/schechter-sca08-turbulence.pdf
+float random(uint seed)
 {
-    return frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);
+    seed ^= 2747636419u;
+    seed *= 2654435769u;
+    seed ^= seed >> 16;
+    seed *= 2654435769u;
+    seed ^= seed >> 16;
+    seed *= 2654435769u;
+    return seed / 4294967295.0f;
 }
 
 [numthreads(32, 1, 1)]
@@ -121,7 +127,7 @@ void FollowAgentTrails(uint3 id : SV_DispatchThreadID)
     float leftWeight = getTrailWeight(agent.position + settings[0].senseRange * getUnitVec(angle + settings[0].senseRotation));
     float rightWeight = getTrailWeight(agent.position + settings[0].senseRange * getUnitVec(angle - settings[0].senseRotation));
 
-    float randScale = 2 * getRandom(agent.position / float2(pixelWidth, pixelHeight) * totalTime);
+    float randScale = 2 * random(id.y * pixelWidth + id.x + totalTime * 1000);
     if(midWeight > rightWeight && midWeight > leftWeight) {
         // continue straight
     }

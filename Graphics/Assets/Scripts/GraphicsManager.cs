@@ -4,6 +4,8 @@ using UnityEngine;
 
 public class GraphicsManager : MonoBehaviour
 {
+    private const float SIM_SPEED = 1f;
+
     [SerializeField] private ComputeShader computeShader;
 
     private MeshRenderer meshRenderer;
@@ -122,7 +124,7 @@ public class GraphicsManager : MonoBehaviour
     }
 
     void Update() {
-        t += Time.deltaTime / CYCLE_DURATION;
+        t += SIM_SPEED * Time.deltaTime / CYCLE_DURATION;
         t %= 1f;
 
         //Color currentColor = new Color(
@@ -133,16 +135,18 @@ public class GraphicsManager : MonoBehaviour
         Color currentColor = Color.white;
 
         computeShader.SetFloats("agentColor", currentColor.r, currentColor.g, currentColor.b);
-        computeShader.SetFloat("deltaTime", Time.deltaTime);
+        computeShader.SetFloat("deltaTime", SIM_SPEED * Time.deltaTime);
         computeShader.SetFloat("totalTime", Time.realtimeSinceStartup);
 
         computeShader.Dispatch(FOLLOW_TRAIL_KERNEL, agentGroupCount, 1, 1);
         computeShader.Dispatch(AGENT_KERNEL, agentGroupCount, 1, 1);
-        
+
     }
 
     private void FixedUpdate() {
-        computeShader.SetFloat("deltaTime", Time.fixedDeltaTime);
+        computeShader.SetFloat("deltaTime", SIM_SPEED * Time.fixedDeltaTime);
+        //computeShader.Dispatch(FOLLOW_TRAIL_KERNEL, agentGroupCount, 1, 1);
+        //computeShader.Dispatch(AGENT_KERNEL, agentGroupCount, 1, 1);
         RunPostProcess(DIFFUSE_KERNEL);
         
     }

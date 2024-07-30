@@ -16,7 +16,7 @@ public struct SimSettings {
 
 public static class SettingsContainer
 {
-    public static SimSettings Settings { get { return consistent; } }
+    public static SimSettings Settings { get { return strands; } }
 
     private static SimSettings test = new SimSettings {
         agentCount = 100,
@@ -98,23 +98,23 @@ public static class SettingsContainer
         senseRotation = 0.8f,
     };
 
-    private static SimSettings plants = new SimSettings {
-        agentCount = 1000000,
-        moveSpeed = 700f,
-        turnSpeed = 10f,
-        fadeRate = 0.2f,
-        blurRate = 10f,
-        senseRange = 100f,
-        senseRotation = 0.2f,
-    };
-
-    private static SimSettings consistent = new SimSettings {
+    private static SimSettings creepy = new SimSettings {
         agentCount = 100000,
         moveSpeed = 700f,
-        turnSpeed = 10f,
+        turnSpeed = 20f,
         fadeRate = 1.0f,
         blurRate = 0f,
         senseRange = 100f,
         senseRotation = 0.5f,
+    };
+
+    private static SimSettings consistent = new SimSettings {
+        agentCount = 250000,
+        moveSpeed = 20f,
+        turnSpeed = 1f,
+        fadeRate = 0.2f,
+        blurRate = 3f,
+        senseRange = 30f,
+        senseRotation = 0.61f,
     };
 }
