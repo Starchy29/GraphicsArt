@@ -2,10 +2,8 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-public class GraphicsManager : MonoBehaviour
+public class CreepySimulator : MonoBehaviour
 {
-    const int STEPS_PER_FRAME = 10;
-
     [SerializeField] private ComputeShader computeShader;
 
     private MeshRenderer meshRenderer;
@@ -13,7 +11,7 @@ public class GraphicsManager : MonoBehaviour
     private RenderTexture texture;
     private RenderTexture postProcessTexture;
 
-    const int RESOLUTION_HEIGHT = 1440; // 1440
+    const int RESOLUTION_HEIGHT = 1440;
     const float ASPECT_RATIO = 16f / 9f;
     const int RESOLUTION_WIDTH = (int)(ASPECT_RATIO * RESOLUTION_HEIGHT);
 
@@ -37,7 +35,7 @@ public class GraphicsManager : MonoBehaviour
     const float CYCLE_DURATION = 10.0f;
     private float t;
 
-    ~GraphicsManager() {
+    ~CreepySimulator() {
         agentBuffer.Release();
         settingsBuffer.Release();
     }
@@ -75,7 +73,7 @@ public class GraphicsManager : MonoBehaviour
 
         // Create texture
         texture = new RenderTexture(RESOLUTION_WIDTH, RESOLUTION_HEIGHT, 1);
-        texture.filterMode = FilterMode.Bilinear;
+        texture.filterMode = FilterMode.Point;
         texture.enableRandomWrite = true;
         meshRenderer.sharedMaterial.mainTexture = texture;
 
@@ -123,8 +121,9 @@ public class GraphicsManager : MonoBehaviour
         postProcessGroupCounts = new Vector2Int(Mathf.CeilToInt((float)RESOLUTION_WIDTH / groupX), Mathf.CeilToInt((float)RESOLUTION_HEIGHT / groupY));
     }
 
-    private void FixedUpdate() {
-        t += Time.fixedDeltaTime / CYCLE_DURATION;
+    // updating the agents more frequently yields very different results
+    void Update() {
+        t +=  Time.deltaTime / CYCLE_DURATION;
         t %= 1f;
 
         //Color currentColor = new Color(
@@ -135,19 +134,18 @@ public class GraphicsManager : MonoBehaviour
         Color currentColor = Color.white;
 
         computeShader.SetFloats("agentColor", currentColor.r, currentColor.g, currentColor.b, 1f);
-
-        for(int i = 0; i < STEPS_PER_FRAME; i++) {
-            StepSimulation();
-        }
-    }
-
-    private void StepSimulation() {
-        computeShader.SetFloat("deltaTime", Time.fixedDeltaTime);
+        computeShader.SetFloat("deltaTime", Time.deltaTime);
         computeShader.SetFloat("totalTime", Time.realtimeSinceStartup);
 
         computeShader.Dispatch(FOLLOW_TRAIL_KERNEL, agentGroupCount, 1, 1);
         computeShader.Dispatch(AGENT_KERNEL, agentGroupCount, 1, 1);
+
+    }
+
+    private void FixedUpdate() {
+        computeShader.SetFloat("deltaTime", Time.fixedDeltaTime);
         RunPostProcess(DIFFUSE_KERNEL);
+        
     }
 
     private void RunPostProcess(int kernelIndex) {

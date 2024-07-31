@@ -15,6 +15,7 @@ struct SimSettings {
     float blurRate;
     float senseRange;
     float senseRotation;
+    float trailWeight;
 };
 
 RWStructuredBuffer<SimSettings> settings;
@@ -22,7 +23,7 @@ RWStructuredBuffer<SimSettings> settings;
 RWStructuredBuffer<Agent> _Agents;
 float totalTime;
 float deltaTime;
-float3 agentColor;
+float4 agentColor;
 
 int pixelWidth;
 int pixelHeight;
@@ -91,7 +92,7 @@ void UpdateAgents(uint3 id : SV_DispatchThreadID)
     int pixelX = round(agent.position.x);
     int pixelY = round(agent.position.y);
     int2 pixelPos = int2(pixelX, pixelY);
-    _Texture[pixelPos] = float4(agentColor, 1);
+    _Texture[pixelPos] = saturate(_Texture[pixelPos] + deltaTime * settings[0].trailWeight * agentColor);
 }
 
 #define SENSE_RADIUS 1
